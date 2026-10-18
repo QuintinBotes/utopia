@@ -510,6 +510,21 @@ fn strip_reasoning(reply: &str) -> &str {
     }
 }
 
+/// 回复的尾巴是不是同一段在复读（#1301）。
+///
+/// 温度 0 的小模型会掉进复读：同一行陈述一遍遍写下去，直到撞上
+/// [`MAX_COMPLETION_TOKENS`]。本地 qwen3-8b 上约 3% 的抽取调用如此，每次占一个槽
+/// 一个多小时，吃掉六成的生成量。上限本身不能降（开推理的端点上它是思考预算），
+/// 所以看尾巴：同一段（至少 30 字节）一字不差连着出现五次，就不是在答题了——
+/// 真实的陈述行彼此不同。按字节比，多字节字符切在哪都不影响
+fn repeats_at_tail(text: &[u8]) -> bool {
+    const REPEATS: usize = 5;
+    (30..=600.min(text.len() / REPEATS)).any(|span| {
+        let tail = &text[text.len() - span * REPEATS..];
+        tail.chunks(span).all(|piece| piece == &tail[..span])
+    })
+}
+
 impl LlmClient {
     pub fn new(base_url: &str, api_key: Option<&str>, model: &str) -> Self {
         Self::with_timeouts(base_url, api_key, model, CONNECT_TIMEOUT, READ_TIMEOUT)
@@ -698,7 +713,8 @@ impl LlmClient {
         let (mut saw_frame, mut ended) = (false, false);
         let mut finish_reason: Option<String> = None;
         let mut usage: Option<Usage> = None;
-        while let Some(part) = bytes.next().await {
+        let mut checked = 0;
+        'read: while let Some(part) = bytes.next().await {
             let part = part.map_err(Unreachable)?;
             // 网络片段可能断在 UTF-8 字符中间，等完整 SSE 帧到齐再解码。
             buf.push(&part);
@@ -712,6 +728,24 @@ impl LlmClient {
                     &mut finish_reason,
                     &mut usage,
                 );
+                // 复读了就当撞上上限：前面完整的陈述照收（`length` = 半截），不再等它写到
+                // 65,536 个 token。丢掉响应流，连接一关，端点那边也就停了。按帧看而不是按
+                // 网络片段看：一个片段可能装着整段复读。每多 256 字节看一次
+                if !ended && answer.len() >= checked + 256 {
+                    checked = answer.len();
+                    if repeats_at_tail(answer.as_bytes()) {
+                        tracing::warn!(
+                            model = %self.model,
+                            call = %call_label(messages),
+                            chars = answer.len(),
+                            "回复在复读，按截断收下"
+                        );
+                        finish_reason = Some("length".into());
+                        ended = true;
+                        buf = SseBuffer::default();
+                        break 'read;
+                    }
+                }
             }
         }
         // **收尾那一帧也算**：末尾不跟空行的实现有的是，丢掉它就是丢掉答案的尾巴
@@ -1996,6 +2030,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn content_frame(text: &str) -> String {
+        format!(
+            "data: {}\n\n",
+            json!({"choices": [{"delta": {"content": text}}]})
+        )
+    }
+
+    async fn streamed_reply(sse: &str) -> Reply {
+        let (addr, server) = an_http_response("200 OK", "text/event-stream", sse).await;
+        let user = ChatMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        };
+        let reply = client_at(addr)
+            .chat_at_streaming(&[user], Some(0.0))
+            .await
+            .unwrap();
+        server.await.unwrap();
+        reply
+    }
+
+    /// 复读的回复按截断收下（#1301）：这条流没有收尾，没有护栏就是「流断在半路」
+    #[tokio::test]
+    async fn a_reply_that_keeps_repeating_comes_back_cut() {
+        let row = r#"[null,"a","is on","b",null,{},null,null],"#;
+        let sse =
+            content_frame(r#"{"e":[["a","thing",true]],"s":["#) + &content_frame(row).repeat(200);
+        let reply = streamed_reply(&sse).await;
+        assert_eq!(reply.finish_reason.as_deref(), Some("length"));
+        assert!(
+            reply.text.len() < row.len() * 20,
+            "read {} bytes past the loop",
+            reply.text.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_long_reply_whose_rows_differ_is_not_cut() {
+        let rows: String = (0..200)
+            .map(|i| {
+                content_frame(&format!(
+                    r#"[null,"a{i}","is on","b{i}",null,{{}},null,null],"#
+                ))
+            })
+            .collect();
+        let reply = streamed_reply(&(rows + "data: [DONE]\n\n")).await;
+        assert_eq!(reply.finish_reason, None);
+        assert!(reply.text.ends_with(r#""b199",null,{},null,null],"#));
     }
 
     #[tokio::test]
