@@ -81,24 +81,68 @@ pub fn embed_client(s: &LlmSettings) -> Option<LlmClient> {
     ))
 }
 
-/// 按模型的信号量注册表。限额变了就换一把新的——旧的在飞许可自然跑完，
-/// 换的瞬间可能短暂超出新限额，可接受；换来的是"改完即时生效"而不必做
-/// 缓存失效，也不必和 tokio Semaphore 不能缩容的限制搏斗。
+/// 按模型的信号量注册表：每个模型一把，限额变了就地调整（#1302）。
+///
+/// 原来限额一变就换一把新的。等在旧的那把上的任务不会挪过去，每个都要拿旧限额再做
+/// 完一次调用才换到新的上——抽取一次调用几分钟，八个 worker 排在一张许可后面，限额
+/// 从 1 调到 4 之后好几个小时还是一次只跑一个，看起来就是「改了不生效」。
+///
+/// 调高用 `add_permits`，已经在等的立刻放进来。调低时空着的许可当场收走
+/// （`forget_permits`）；正被在飞调用占着的记成欠账，调用还回来时由下一个取许可的
+/// 收掉。没用「另起一个任务把差额 acquire 下来再 forget」：那个任务拿到之前若又调高，
+/// 它会把新加的许可一起吞掉，限额就停在低的那一档；欠账在调高时先抵消，没这个问题。
 #[derive(Default)]
 pub struct ModelGates {
-    inner: std::sync::Mutex<HashMap<String, (usize, Arc<Semaphore>)>>,
+    inner: std::sync::Mutex<HashMap<String, Gate>>,
+}
+
+struct Gate {
+    sem: Arc<Semaphore>,
+    limit: usize,
+    /// 调低之后还该收走、当时正被在飞调用占着的许可数
+    owed: usize,
 }
 
 impl ModelGates {
-    fn gate(&self, key: &str, limit: usize) -> Arc<Semaphore> {
-        let mut m = self.inner.lock().unwrap();
-        match m.get(key) {
-            Some((n, sem)) if *n == limit => sem.clone(),
-            _ => {
-                let sem = Arc::new(Semaphore::new(limit));
-                m.insert(key.to_string(), (limit, sem.clone()));
-                sem
+    async fn admit(&self, key: &str, limit: usize) -> Option<OwnedSemaphorePermit> {
+        let sem = self.resize(key, limit);
+        loop {
+            let permit = sem.clone().acquire_owned().await.ok()?;
+            if !self.repay(key) {
+                return Some(permit);
             }
+            permit.forget();
+        }
+    }
+
+    fn resize(&self, key: &str, limit: usize) -> Arc<Semaphore> {
+        let mut gates = self.inner.lock().unwrap();
+        let gate = gates.entry(key.to_string()).or_insert_with(|| Gate {
+            sem: Arc::new(Semaphore::new(limit)),
+            limit,
+            owed: 0,
+        });
+        if limit > gate.limit {
+            let raise = limit - gate.limit;
+            let cancelled = raise.min(gate.owed);
+            gate.owed -= cancelled;
+            gate.sem.add_permits(raise - cancelled);
+        } else if limit < gate.limit {
+            let lower = gate.limit - limit;
+            gate.owed += lower - gate.sem.forget_permits(lower);
+        }
+        gate.limit = limit;
+        gate.sem.clone()
+    }
+
+    /// 还欠着许可就该收掉刚拿到的这张
+    fn repay(&self, key: &str) -> bool {
+        match self.inner.lock().unwrap().get_mut(key) {
+            Some(gate) if gate.owed > 0 => {
+                gate.owed -= 1;
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -120,12 +164,7 @@ pub async fn acquire(
         .await
         .ok()?;
     let key = format!("{base_url}|{model}");
-    state
-        .model_gates
-        .gate(&key, limit)
-        .acquire_owned()
-        .await
-        .ok()
+    state.model_gates.admit(&key, limit).await
 }
 
 /// `acquire` 的便捷形式：直接从工作区设置取 chat 模型的身份。
@@ -139,3 +178,7 @@ pub async fn acquire_embed(state: &AppState, s: &LlmSettings) -> Option<OwnedSem
     let (base, model) = (s.embed_base_url.as_deref()?, s.embed_model.as_deref()?);
     acquire(state, base, model).await
 }
+
+#[cfg(test)]
+#[path = "llm_util_tests.rs"]
+mod tests;
