@@ -88,12 +88,15 @@ pub fn embed_client(s: &LlmSettings) -> Option<LlmClient> {
 /// 从 1 调到 4 之后好几个小时还是一次只跑一个，看起来就是「改了不生效」。
 ///
 /// 调高用 `add_permits`，已经在等的立刻放进来。调低时空着的许可当场收走
-/// （`forget_permits`）；正被在飞调用占着的记成欠账，调用还回来时由下一个取许可的
-/// 收掉。没用「另起一个任务把差额 acquire 下来再 forget」：那个任务拿到之前若又调高，
-/// 它会把新加的许可一起吞掉，限额就停在低的那一档；欠账在调高时先抵消，没这个问题。
+/// （`forget_permits`）；正被在飞调用占着的记成欠账，由等着的任务拿到时收掉。没用
+/// 「另起一个任务把差额 acquire 下来再 forget」：信号量先来先得，那个任务排在已经在等的
+/// 任务后面，还回来的许可先发给它们，它们全在调低之后的限额之上进去了，它才拿到。
+///
+/// 限额在两处读：取许可时，和管理员改了限额时（[`ModelGates::refresh`]）。只靠前一处
+/// 的话，所有 worker 都等在闸门上、唯一在飞的又是一次复读的调用时，没人来读新限额
 #[derive(Default)]
 pub struct ModelGates {
-    inner: std::sync::Mutex<HashMap<String, Gate>>,
+    inner: std::sync::Mutex<HashMap<(String, String), Gate>>,
 }
 
 struct Gate {
@@ -104,29 +107,42 @@ struct Gate {
 }
 
 impl ModelGates {
-    async fn admit(&self, key: &str, limit: usize) -> Option<OwnedSemaphorePermit> {
-        let sem = self.resize(key, limit);
+    async fn admit(
+        &self,
+        base_url: &str,
+        model: &str,
+        limit: usize,
+    ) -> Option<OwnedSemaphorePermit> {
+        let key = (base_url.to_string(), model.to_string());
+        let sem = self.resize(&key, limit);
         loop {
             let permit = sem.clone().acquire_owned().await.ok()?;
-            if !self.repay(key) {
+            if !self.repay(&key) {
                 return Some(permit);
             }
             permit.forget();
         }
     }
 
-    fn resize(&self, key: &str, limit: usize) -> Arc<Semaphore> {
+    /// 按库里的限额把认识的每个模型调一遍：管理员改了限额就调，等着的任务当场放行或收紧
+    pub async fn refresh(&self, pool: &sqlx::PgPool) -> utopia_core::AppResult<()> {
+        let keys: Vec<(String, String)> = self.inner.lock().unwrap().keys().cloned().collect();
+        for key in keys {
+            let limit = utopia_store::model_limits::limit_for(pool, &key.0, &key.1).await?;
+            self.resize(&key, limit);
+        }
+        Ok(())
+    }
+
+    fn resize(&self, key: &(String, String), limit: usize) -> Arc<Semaphore> {
         let mut gates = self.inner.lock().unwrap();
-        let gate = gates.entry(key.to_string()).or_insert_with(|| Gate {
+        let gate = gates.entry(key.clone()).or_insert_with(|| Gate {
             sem: Arc::new(Semaphore::new(limit)),
             limit,
             owed: 0,
         });
         if limit > gate.limit {
-            let raise = limit - gate.limit;
-            let cancelled = raise.min(gate.owed);
-            gate.owed -= cancelled;
-            gate.sem.add_permits(raise - cancelled);
+            gate.sem.add_permits(limit - gate.limit);
         } else if limit < gate.limit {
             let lower = gate.limit - limit;
             gate.owed += lower - gate.sem.forget_permits(lower);
@@ -136,7 +152,7 @@ impl ModelGates {
     }
 
     /// 还欠着许可就该收掉刚拿到的这张
-    fn repay(&self, key: &str) -> bool {
+    fn repay(&self, key: &(String, String)) -> bool {
         match self.inner.lock().unwrap().get_mut(key) {
             Some(gate) if gate.owed > 0 => {
                 gate.owed -= 1;
@@ -163,8 +179,7 @@ pub async fn acquire(
     let limit = utopia_store::model_limits::limit_for(&state.pool, base_url, model)
         .await
         .ok()?;
-    let key = format!("{base_url}|{model}");
-    state.model_gates.admit(&key, limit).await
+    state.model_gates.admit(base_url, model, limit).await
 }
 
 /// `acquire` 的便捷形式：直接从工作区设置取 chat 模型的身份。
