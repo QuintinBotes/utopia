@@ -693,8 +693,8 @@ export const zh: Strings = {
     notionQueryField: "搜索词（可选——留空则取全部已分享页面）",
     tokenField: "GitHub 令牌（可选，不再显示）",
     includePullRequests: "把 PR 也当工单收进来",
-    includeGlobsField: "包含的 glob（逗号分隔，可选）",
-    excludeGlobsField: "排除的 glob（逗号分隔，可选）",
+    includeGlobsField: "包含的 glob（逗号分隔，可选；填了就替换默认值）",
+    excludeGlobsField: "排除的 glob（逗号分隔，可选；填了就替换默认值）",
     interval: "同步计划",
     intervalManual: "仅手动",
     intervalEvery: (m: number) =>

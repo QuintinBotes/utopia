@@ -760,8 +760,8 @@ export const en = {
     notionQueryField: "Search term (optional — empty takes every shared page)",
     tokenField: "GitHub token (optional, never shown again)",
     includePullRequests: "Treat pull requests as tickets too",
-    includeGlobsField: "Include globs (comma-separated, optional)",
-    excludeGlobsField: "Exclude globs (comma-separated, optional)",
+    includeGlobsField: "Include globs (comma-separated, optional; replaces the default)",
+    excludeGlobsField: "Exclude globs (comma-separated, optional; replaces the default)",
     interval: "Sync schedule",
     intervalManual: "Manual only",
     intervalEvery: (m: number) =>
