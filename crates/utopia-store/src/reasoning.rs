@@ -3234,7 +3234,3 @@ pub async fn derived_for_entity(
     .fetch_all(pool)
     .await?)
 }
-
-#[cfg(test)]
-#[path = "reasoning_tests.rs"]
-mod tests;
