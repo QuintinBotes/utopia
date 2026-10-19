@@ -140,6 +140,8 @@ export const en = {
     inference_off:
       "Materialized inference is off for this knowledge base. Turn it on in Settings.",
     bad_resolution: "That is not a valid decision.",
+    interval_inverted:
+      "The end is before the start. Give an end after the start.",
     empty_state_span:
       "A state that ends where it starts holds at no moment. Give an end after the start, or leave it open.",
     unknown_marks: "A single date marks the start, the end, or neither.",
