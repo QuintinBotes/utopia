@@ -961,6 +961,7 @@ async fn align_phrases_locked(
                     %kb_id,
                     pass,
                     items = items.len(),
+                    item_ids = ?items.iter().map(|item| item.id).collect::<Vec<_>>(),
                     malformed,
                     finish_reason = ?reply.finish_reason,
                     repeating = reply.repeating,

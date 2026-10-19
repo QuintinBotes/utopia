@@ -34,6 +34,7 @@ use utopia_store::extraction_drops::reason;
 use utopia_store::graph::FactObject;
 use utopia_store::graph::Validity;
 use utopia_store::pending::{Outcome, Proposal};
+pub(crate) use utopia_store::resolution::name_key;
 use uuid::Uuid;
 
 /// 一块调 + 解析完后的中间产物，apply 半步读它落库（#588 cut 1）。
@@ -318,7 +319,7 @@ async fn apply_open_extraction(
                 )
                 .await;
             }
-            touched_names.insert(utopia_store::resolution::normalize_name(name).to_lowercase());
+            touched_names.insert(name_key(name));
             if !doc_entities.iter().any(|(x, _, _)| *x == id) {
                 doc_entities.push((id, kind.to_string(), name.to_string()));
                 known_by_name.entry(key.clone()).or_insert(id);
@@ -681,7 +682,7 @@ async fn apply_open_extraction(
         }
         // 一个名字不会同时是两样东西的名字：这一块或本文档前面已经把它认成
         // 另一个实体的，不记
-        let key = utopia_store::resolution::normalize_name(name).to_lowercase();
+        let key = name_key(name);
         let claimed = handled_by_name
             .get(&key)
             .is_some_and(|ids| ids.iter().any(|x| *x != id));
@@ -913,13 +914,6 @@ async fn embed_pending_names(
     }
     utopia_store::name_vectors::set(&state.pool, kb_id, &items).await?;
     Ok(items.len())
-}
-
-pub(crate) fn name_key(name: &str) -> String {
-    name.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
 }
 
 /// 陈述里写的名字 → 实体。先看这一块列出的，再看本文档前面认下的（提示词里的清单）。
