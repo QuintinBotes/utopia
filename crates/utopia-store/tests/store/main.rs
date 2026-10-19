@@ -22,6 +22,9 @@
 //!   过滤——修正行、重复行都按全库找，会改到别的测试正在物化、改写的行。
 //! - `a_row_a_rule_implied_follows_its_statements`：把迁移 0101 原样跑一遍，同样不按 kb
 //!   过滤——它按来源重算全库类型化行的见证，会改到别的测试正在物化的行。
+//! - `a_due_base_is_queued_once`：`queue_due_inferences` 扫全库到期的库。0050 起新建的库开着
+//!   推理又从没推过，别的测试刚建的库全算到期，会被它排上推理任务——数自己库任务的测试
+//!   （比如 lib 单元测试里的 `phrase_bindings_delivery_tests`）就会多数出一个。
 //!
 //! 新加测试默认放这个目录；只有碰上面那类全局状态时才放顶层，并在这里补一行为什么。
 mod a_batch_decides_like_a_person;
@@ -55,6 +58,7 @@ mod a_judged_entity_waits_its_turn;
 mod a_kind_word_binds_to_a_class;
 mod a_late_value_takes_its_place_in_history;
 mod a_mapping_is_not_a_fact;
+mod a_merge_keeps_distinct_statements;
 mod a_merge_rewinds_with_the_second_clock;
 mod a_merged_target_stays_out_of_the_export;
 mod a_moment_marks_its_state;
@@ -88,6 +92,7 @@ mod a_secret_is_sealed_at_rest;
 mod a_signature_holds_on_every_path;
 mod a_signature_vector_lasts_while_its_text_does;
 mod a_similar_name_is_proposed_not_merged;
+mod a_single_name_candidate_is_not_counted;
 mod a_source_kind_is_listed_once;
 mod a_source_reaches_only_where_it_was_granted;
 mod a_statement_is_attested_by_what_its_document_says;

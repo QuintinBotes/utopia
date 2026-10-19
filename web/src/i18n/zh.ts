@@ -127,6 +127,7 @@ export const zh: Strings = {
     concurrency_range: "填一个 1 到 256 之间的数。",
     inference_off: "这个库没有打开物化推理。到设置里开。",
     bad_resolution: "这不是一个有效的裁决。",
+    interval_inverted: "终点早于起点。请给一个晚于起点的终点。",
     empty_state_span: "起止相同的状态任何时刻都不成立。给一个晚于起点的终点，或者让它开着。",
     unknown_marks: "单个日期标的是开始、结束，或者都不是。",
     marks_needs_state: "只有状态属性才说单个日期标的是什么，事件与恒常属性不说。",

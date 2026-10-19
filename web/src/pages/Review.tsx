@@ -1551,6 +1551,7 @@ export function Review() {
       resolution: ViolationResolution;
       opts?: DecideOpts;
     }) => api.decideViolation(kb!.id, id, resolution, opts),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
     onSettled: invalidate,
   });
   // 检查是同步的纯计算,所以直接 mutate 不排队。跑完把报告留在按钮旁边——
@@ -1580,6 +1581,7 @@ export function Review() {
         close_at: closeAt,
         close_at_precision: closeAtPrecision,
       }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
     onSettled: invalidate,
   });
 
@@ -1593,6 +1595,7 @@ export function Review() {
       validTo: string;
       precision: string;
     }) => api.closeFact(kb!.id, id, validTo, precision),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
     onSettled: invalidate,
   });
 
