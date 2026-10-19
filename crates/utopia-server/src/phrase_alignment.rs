@@ -938,6 +938,7 @@ async fn align_phrases_locked(
                     items = items.len(),
                     malformed,
                     finish_reason = ?reply.finish_reason,
+                    repeating = reply.repeating,
                     chars = reply.text.chars().count(),
                     reply = %snippet(&reply.text),
                     "短语对齐回复读不出一条，这一批留到下次"
