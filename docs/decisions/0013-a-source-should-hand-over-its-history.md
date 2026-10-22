@@ -90,10 +90,31 @@ Wikipedia; there revisions have to be sampled, an issue tracker hands the events
    copy for GitLab triples that. So a pure `ticket::render(&Ticket)` owns the document: the
    heading, the dated sentences, `## Description`, a `## History` sorted by time, `## Comments`.
    Each connector maps its payload into `Ticket` and keeps its own fetch: three pulls with `since`
-   for GitHub, one JQL call for Jira, and for GitLab a list per kind (`issues`, `merge_requests`
-   with `updated_after`) plus, per ticket, its notes and its `resource_state_events`,
-   `resource_label_events` and `resource_milestone_events`. Still no provider trait: the fetch
-   strategies are as different as the dead end says, and they stay in their own modules.
+   for GitHub, one JQL call for Jira, and for GitLab a list per kind plus, per ticket, its notes and
+   its `resource_state_events`, `resource_label_events` and `resource_milestone_events`. Still no
+   provider trait: the fetch strategies are as different as the dead end says, and they stay in
+   their own modules.
+
+   `Ticket` holds what the two renderers write today, in the order each writes it, and nothing
+   that would let `render` reword it:
+
+   - `heading`: the title line after `# ` (`#12 Fix it`, `KAFKA-1 Summary`, `!7 Fix it`);
+   - `sentences`: the dated and plain sentences under the heading, each already worded and in the
+     connector's own order (GitHub: opened, state, closed, labels, assignees; Jira: reported,
+     type, state, priority, assignee, resolved, labels);
+   - `description`: the body under `## Description`, or none;
+   - `history`: `(time, text)` pairs written as `- <time> — <text>` under `## History`, sorted by
+     time with a stable sort, so GitHub's already ordered events and Jira's sorted lines come out
+     as they do today;
+   - `comments`: `(author, time or none, body)` written as `### <author> on <time>` under
+     `## Comments`, skipping an empty body, with `?` for a missing time as Jira writes it.
+
+   **GitLab reads like GitHub and Jira, by update time.** Each kind is listed with
+   `updated_after`, `order_by=updated_at` and `sort=asc`, and a run stops only at a timestamp
+   boundary, as [0072](0072-a-source-checkpoint-ends-at-a-timestamp-boundary.md) decides for the
+   other two. **Merge requests are opt-in**, as pull requests are for GitHub
+   (`include_pull_requests`): `include_merge_requests` defaults to false, and only issues are read
+   without it.
 
    Two constraints come with it.
 
