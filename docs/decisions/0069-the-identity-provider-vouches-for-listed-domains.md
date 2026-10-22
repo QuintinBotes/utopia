@@ -1,6 +1,6 @@
 # 0069 · The identity provider vouches for listed domains
 
-- **Status**: Implemented · 2026-10-16 · #1237, #1258 · open: no per-domain role; an SSO-opened account has no password and no reset; no global case-insensitive email uniqueness
+- **Status**: Implemented · 2026-10-16 · #1237, #1258, #1362 · open: no per-domain role; an SSO-opened account has no password and no reset; no global case-insensitive email uniqueness
 - **Written**: 2026-10-16 (conventions in the [README](README.md))
 - **Related**: migration `0056` (an identity is linked by its owner); [0066](0066-another-app-may-trade-a-fresh-id-token-for-a-session.md) (the exchange, whose mapping this widens); [0014](0014-identity-from-the-person-scope-from-the-token.md) (identity comes from the person); [#1237](https://github.com/deeplethe/utopia/pull/1237)
 
