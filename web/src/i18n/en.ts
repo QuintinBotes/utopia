@@ -1348,6 +1348,7 @@ export const en = {
     },
     chatShapeOk: "ok",
     chatShapeRefused: (error: string) => `refused: ${error}`,
+    chatShapeTimedOut: (error: string) => `timed out (${error})`,
     okDim: (dim: number) => `Reachable and authenticated (dim ${dim})`,
     unsaved: "Unsaved changes. Save this card to test them.",
     readersTitle: "Reading scans and recordings",

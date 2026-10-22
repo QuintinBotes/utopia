@@ -2760,7 +2760,7 @@ export const api = {
         ok: boolean;
         reply?: string;
         error?: string;
-        checks?: Record<"plain" | "streaming" | "tools", { ok: boolean; error?: string }>;
+        checks?: Record<"plain" | "streaming" | "tools", { ok: boolean; timed_out?: boolean; error?: string }>;
       };
       embed: { ok: boolean; dim?: number; error?: string };
       ocr?: { ok: boolean; version?: string | null; error?: string };

@@ -1195,6 +1195,7 @@ export const zh: Strings = {
     },
     chatShapeOk: "通过",
     chatShapeRefused: (error: string) => `被拒：${error}`,
+    chatShapeTimedOut: (error: string) => `超时（${error}）`,
     okDim: (dim: number) => `已连通，认证通过（维度 ${dim}）`,
     unsaved: "有未保存的修改。先保存这张卡，再测试。",
     readersTitle: "读扫描件与录音",
