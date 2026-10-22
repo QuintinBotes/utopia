@@ -314,8 +314,6 @@ pub fn password_login(s: &AppState) -> bool {
     s.password_login || config().is_err()
 }
 
-/// 启动时把关掉密码登录的两种后果说出来：没配 SSO 时这个开关不生效；
-/// 没有允许名单时只有绑定过身份的人进得来，新人既注册不了也开不了户
 /// 启动时说出来：允许名单按 ID token 里核实过的 email 关联账号，scope 里没有 `email`
 /// 时多数身份提供方根本不发这个声明，名单就形同虚设
 pub fn warn_about_scopes() {
@@ -326,6 +324,8 @@ pub fn warn_about_scopes() {
     }
 }
 
+/// 启动时把关掉密码登录的两种后果说出来：没配 SSO 时这个开关不生效；
+/// 没有允许名单时只有绑定过身份的人进得来，新人既注册不了也开不了户
 pub fn warn_about_password_login(s: &AppState) {
     if s.password_login {
         return;
