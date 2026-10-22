@@ -236,7 +236,47 @@ pub async fn put_transcribe(
     Ok(Json(json!({ "ok": true, "requeued": requeued })))
 }
 
-/// 连通性测试：对话发一条最小消息；embedding 试算一条并返回维度；版面识别服务问一声健康。
+/// 对话模型按任务真正发出的三种请求各试一次（#1354）：普通一问；抽取那种流式、带完成上限、
+/// 温度 0 的一问；带一个工具的一问。只发普通一问的话，拒收 `max_tokens`、`temperature` 或工具的
+/// 端点照样「测试通过」，毛病要等到抽取任务成片失败、对话悄悄退回一步检索时才露出来。
+/// 普通一问就失败的，端点本身不通，后两问不再发，免得同一个错报三遍。每问只要一个词，
+/// 托管模型上花不了几个 token
+async fn chat_checks(client: &utopia_llm::LlmClient) -> serde_json::Value {
+    let msg = [ChatMessage {
+        role: "user".into(),
+        content: "Reply with exactly one word: OK".into(),
+    }];
+    let reply = match client.chat(&msg).await {
+        Ok(reply) => reply.chars().take(50).collect::<String>(),
+        Err(e) => return json!({ "ok": false, "error": e.to_string() }),
+    };
+    let streaming = client.chat_at_streaming(&msg, Some(0.0)).await.map(|_| ());
+    let tool = json!([{ "type": "function", "function": {
+        "name": "ping", "description": "Answers pong.",
+        "parameters": { "type": "object", "properties": {} } } }]);
+    let ask = [json!({ "role": "user", "content": "Call the ping tool." })];
+    let tools = client.chat_tools(&ask, &tool).await.map(|_| ());
+    let check = |r: &anyhow::Result<()>| match r {
+        Ok(()) => json!({ "ok": true }),
+        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    };
+    let failed: Vec<String> = [("streaming", &streaming), ("tools", &tools)]
+        .into_iter()
+        .filter_map(|(name, r)| r.as_ref().err().map(|e| format!("{name}: {e}")))
+        .collect();
+    let mut out = json!({
+        "ok": failed.is_empty(),
+        "reply": reply,
+        "checks": { "plain": { "ok": true }, "streaming": check(&streaming), "tools": check(&tools) },
+    });
+    if !failed.is_empty() {
+        out["error"] = json!(format!("plain ok; {}", failed.join("; ")));
+    }
+    out
+}
+
+/// 连通性测试：对话按任务的三种请求形状各试一次（见 [`chat_checks`]）；embedding 试算一条并
+/// 返回维度；版面识别服务问一声健康。
 pub async fn test(
     State(state): State<AppState>,
     AuthUser(user): AuthUser,
@@ -254,18 +294,7 @@ pub async fn test(
 
     let chat_result = match llm_util::chat_client(&s) {
         None => json!({ "ok": false, "error": "Not configured" }),
-        Some(client) => {
-            let msg = [ChatMessage {
-                role: "user".into(),
-                content: "Reply with exactly one word: OK".into(),
-            }];
-            match client.chat(&msg).await {
-                Ok(reply) => {
-                    json!({ "ok": true, "reply": reply.chars().take(50).collect::<String>() })
-                }
-                Err(e) => json!({ "ok": false, "error": e.to_string() }),
-            }
-        }
+        Some(client) => chat_checks(&client).await,
     };
 
     let embed_result = match llm_util::embed_client(&s) {
@@ -299,4 +328,73 @@ pub async fn test(
         "ocr": ocr_result,
         "transcribe": transcribe_result,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// 一个只认普通与流式、见到工具就 400 的端点；`down` 时什么都 500
+    async fn endpoint(down: bool) -> (String, Arc<AtomicUsize>) {
+        async fn reply(
+            State((down, calls)): State<(bool, Arc<AtomicUsize>)>,
+            Json(body): Json<serde_json::Value>,
+        ) -> Response {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if down {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response();
+            }
+            if body.get("tools").is_some() {
+                let e = serde_json::json!({ "error": { "message": "tools are not supported by this deployment" } });
+                return (StatusCode::BAD_REQUEST, Json(e)).into_response();
+            }
+            if body["stream"] == true {
+                let frame = serde_json::json!({ "choices": [{ "index": 0, "delta": { "content": "OK" }, "finish_reason": "stop" }] });
+                let sse = format!("data: {frame}\n\ndata: [DONE]\n\n");
+                return ([("content-type", "text/event-stream")], sse).into_response();
+            }
+            Json(serde_json::json!({ "choices": [{ "message": { "role": "assistant", "content": "OK" }, "finish_reason": "stop" }] }))
+                .into_response()
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = Router::new()
+            .route("/chat/completions", post(reply))
+            .with_state((down, calls.clone()));
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (url, calls)
+    }
+
+    #[tokio::test]
+    async fn a_model_that_refuses_tools_fails_the_test_and_says_which_shape() {
+        let (url, _) = endpoint(false).await;
+        let out = super::chat_checks(&utopia_llm::LlmClient::new(&url, None, "scripted")).await;
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["checks"]["plain"]["ok"], true);
+        assert_eq!(out["checks"]["streaming"]["ok"], true, "{out}");
+        assert_eq!(out["checks"]["tools"]["ok"], false);
+        let error = out["error"].as_str().unwrap();
+        assert!(error.starts_with("plain ok; tools: "), "{error}");
+        assert!(!error.contains("streaming:"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_that_is_down_is_reported_once() {
+        let (url, calls) = endpoint(true).await;
+        let out = super::chat_checks(&utopia_llm::LlmClient::new(&url, None, "scripted")).await;
+        assert_eq!(out["ok"], false);
+        assert!(out.get("checks").is_none(), "{out}");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the streamed and tool shapes are not sent when the plain one fails"
+        );
+    }
 }
