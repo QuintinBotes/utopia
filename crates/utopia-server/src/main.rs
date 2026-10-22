@@ -38,6 +38,7 @@ mod retrieval;
 mod rss_full_content;
 mod search_recovery;
 mod state;
+mod ticket;
 #[cfg(test)]
 mod ticket_golden_tests;
 mod time_resolution;
