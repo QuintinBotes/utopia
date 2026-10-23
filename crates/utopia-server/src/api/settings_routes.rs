@@ -303,10 +303,19 @@ impl std::fmt::Display for TimedOut {
 
 impl std::error::Error for TimedOut {}
 
+/// 没答完：撞上探测上限，或者更早撞上探测客户端自己的读超时（`chat_probe_client` 是 30 s，比上限短）
+fn timed_out(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<TimedOut>().is_some()
+        || e.chain().any(|c| {
+            c.downcast_ref::<utopia_llm::Unreachable>()
+                .is_some_and(|u| u.0.is_timeout())
+        })
+}
+
 fn check(r: &anyhow::Result<()>) -> serde_json::Value {
     match r {
         Ok(()) => json!({ "ok": true }),
-        Err(e) if e.downcast_ref::<TimedOut>().is_some() => {
+        Err(e) if timed_out(e) => {
             json!({ "ok": false, "timed_out": true, "error": e.to_string() })
         }
         Err(e) => json!({ "ok": false, "error": e.to_string() }),
@@ -464,6 +473,32 @@ mod tests {
         );
         let refused = super::check(&Err(anyhow::anyhow!("HTTP 400")));
         assert!(refused.get("timed_out").is_none(), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn a_read_timeout_before_the_limit_reads_as_timed_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(2)))
+            .mount(&server)
+            .await;
+        let client = utopia_llm::LlmClient::with_timeouts(
+            &server.uri(),
+            None,
+            "m",
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_millis(100),
+        );
+        let msg = [utopia_llm::ChatMessage {
+            role: "user".into(),
+            content: "x".into(),
+        }];
+        let r = super::limited_for(std::time::Duration::from_secs(10), async {
+            client.chat(&msg).await.map(|_| ())
+        })
+        .await;
+        let c = super::check(&r);
+        assert_eq!(c["timed_out"], true, "{c}");
     }
 
     #[tokio::test]
