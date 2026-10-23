@@ -41,6 +41,8 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
+use crate::ticket::stamp;
+
 /// 一次同步最多翻多少页。Jira 的 `total` 常常是几万，全量拉回来没有意义——
 /// 增量窗口之外的等下一次 JQL 取。
 const MAX_PAGES: u32 = 10;
@@ -298,8 +300,6 @@ pub async fn fetch_all(
     }
     Ok((out, total))
 }
-
-use crate::ticket::stamp;
 
 #[cfg(test)]
 mod tests {

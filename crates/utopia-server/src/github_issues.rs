@@ -40,6 +40,8 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
+use crate::ticket::stamp;
+
 /// 一次同步最多取多少页（每页 100）。GitHub 的分页没有天然终点，
 /// 一个活跃仓库能翻很久；这里沿用单端点的分页预算。
 const MAX_PAGES: u32 = 10;
@@ -99,9 +101,6 @@ pub struct Event {
 fn issue_number_from_url(url: &str) -> Option<i64> {
     url.rsplit('/').next()?.parse().ok()
 }
-
-/// 工单上的一个时刻，写进正文的样子：到秒、带 `Z`（`2026-08-18T16:18:27Z`）
-use crate::ticket::stamp;
 
 /// 把一张工单连同它的评论与事件排成一篇文档（[`crate::ticket::render`]）。
 ///
